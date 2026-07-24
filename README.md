@@ -338,6 +338,16 @@ The rendering pipeline intentionally performs **restricted** environment variabl
 This safeguard ensures alert annotations are preserved correctly during manifest generation.
 
 ---
+## Validation
+
+Before deploying, render and validate the manifests:
+
+```bash
+make validate
+```
+
+The repository also runs the same validation automatically on every push and pull request using GitHub Actions.
+```
 
 # License
 
