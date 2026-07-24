@@ -3,7 +3,8 @@ name: Validate manifests
 on:
   pull_request:
   push:
-    branches: [main]
+    branches:
+      - main
 
 permissions:
   contents: read
@@ -11,13 +12,63 @@ permissions:
 jobs:
   validate:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - name: Install tools
-        run: sudo apt-get update && sudo apt-get install -y gettext-base
-      - name: Prepare non-secret CI environment
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install required tools
         run: |
+          sudo apt-get update
+          sudo apt-get install -y gettext-base
+
+          if ! command -v kubectl >/dev/null 2>&1; then
+            curl -L -o kubectl \
+              "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/kubectl
+          fi
+
+          envsubst --version
+          kubectl version --client
+
+      - name: Prepare CI environment
+        run: |
+          test -f .env.example
           cp .env.example .env
-          sed -i "s/SMTP_PASSWORD='replace-me'/SMTP_PASSWORD='ci-placeholder'/" .env
-      - name: Render and validate
+
+          sed -i \
+            "s|^SMTP_PASSWORD=.*|SMTP_PASSWORD='ci-placeholder'|" \
+            .env
+
+      - name: Check repository files
+        run: |
+          test -x scripts/render.sh
+          test -x scripts/validate.sh
+
+          echo "Tracked templates:"
+          find . \
+            -path './.git' -prune -o \
+            -path './.rendered' -prune -o \
+            -type f -print |
+            sort
+
+      - name: Render manifests
+        run: |
+          rm -rf .rendered
+          ./scripts/render.sh
+
+          echo "Rendered manifests:"
+          find .rendered -type f -maxdepth 2 -print | sort
+
+      - name: Check alert templates
+        run: |
+          grep -R '\$labels' .rendered/40-alert-rules.yaml
+
+          if grep -R '{{ \.' .rendered/40-alert-rules.yaml; then
+            echo "ERROR: envsubst removed \$labels from vmalert templates."
+            exit 1
+          fi
+
+      - name: Validate manifests
         run: ./scripts/validate.sh
