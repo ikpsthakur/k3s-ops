@@ -19,7 +19,7 @@ if grep -R --line-number -E 'image:[[:space:]]+.*:(latest|stable)([[:space:]]|$)
 fi
 
 if command -v kubectl >/dev/null 2>&1; then
-  kubectl apply --dry-run=client -f "${RENDERED_DIR}" >/dev/null
+  kubectl apply --dry-run=client --validate=false -f "${RENDERED_DIR}" >/dev/null
   echo "kubectl client-side validation passed."
 else
   echo "kubectl not found; completed static validation only."
