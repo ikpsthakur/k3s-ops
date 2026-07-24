@@ -13,14 +13,16 @@ if grep -R --line-number -E '\$\{[A-Z0-9_]+\}' "${RENDERED_DIR}"; then
   exit 1
 fi
 
-if grep -R --line-number -E 'image:[[:space:]]+.*:(latest|stable)([[:space:]]|$)' "${RENDERED_DIR}"; then
+if grep -R --line-number -E \
+  'image:[[:space:]]+.*:(latest|stable)([[:space:]]|$)' \
+  "${RENDERED_DIR}"; then
   echo "Mutable image tag detected." >&2
   exit 1
 fi
 
-if command -v kubectl >/dev/null 2>&1; then
-  kubectl apply --dry-run=client --validate=false -f "${RENDERED_DIR}" >/dev/null
-  echo "kubectl client-side validation passed."
-else
-  echo "kubectl not found; completed static validation only."
+if grep -R --line-number '{{ \.' "${RENDERED_DIR}"; then
+  echo "Broken alert template detected." >&2
+  exit 1
 fi
+
+echo "Static manifest validation passed."

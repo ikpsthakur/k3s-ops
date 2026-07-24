@@ -22,15 +22,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y gettext-base
 
-          if ! command -v kubectl >/dev/null 2>&1; then
-            curl -L -o kubectl \
-              "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            chmod +x kubectl
-            sudo mv kubectl /usr/local/bin/kubectl
-          fi
+          curl -fsSL \
+            https://github.com/yannh/kubeconform/releases/latest/download/kubeconform-linux-amd64.tar.gz \
+            | tar -xz
+
+          sudo mv kubeconform /usr/local/bin/kubeconform
 
           envsubst --version
-          kubectl version --client
+          kubeconform -v
 
       - name: Prepare CI environment
         run: |
@@ -59,7 +58,7 @@ jobs:
           ./scripts/render.sh
 
           echo "Rendered manifests:"
-          find .rendered -type f -maxdepth 2 -print | sort
+          find .rendered -maxdepth 2 -type f -print | sort
 
       - name: Check alert templates
         run: |
@@ -71,4 +70,10 @@ jobs:
           fi
 
       - name: Validate manifests
-        run: ./scripts/validate.sh
+        run: |
+          ./scripts/validate.sh
+
+          kubeconform \
+            -strict \
+            -summary \
+            .rendered/*.yaml
