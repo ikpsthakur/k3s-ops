@@ -1,0 +1,159 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: vmagent
+  namespace: ${NAMESPACE}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: k3s-ops-vmagent
+rules:
+  - apiGroups: [""]
+    resources: ["nodes", "nodes/proxy", "nodes/metrics", "services", "endpoints", "pods"]
+    verbs: ["get", "list", "watch"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: k3s-ops-vmagent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: k3s-ops-vmagent
+subjects:
+  - kind: ServiceAccount
+    name: vmagent
+    namespace: ${NAMESPACE}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmagent-config
+  namespace: ${NAMESPACE}
+data:
+  scrape.yml: |
+    global:
+      scrape_interval: ${SCRAPE_INTERVAL}
+      scrape_timeout: 20s
+      external_labels:
+        cluster: ${CLUSTER_NAME}
+
+    scrape_configs:
+      - job_name: kube-state-metrics
+        static_configs:
+          - targets: ["kube-state-metrics.${NAMESPACE}.svc:8080"]
+
+      - job_name: kubelet
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+
+      - job_name: cadvisor
+        scheme: https
+        bearer_token_file: /var/run/secrets/kubernetes.io/serviceaccount/token
+        tls_config:
+          ca_file: /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+        kubernetes_sd_configs:
+          - role: node
+        relabel_configs:
+          - target_label: __address__
+            replacement: kubernetes.default.svc:443
+          - source_labels: [__meta_kubernetes_node_name]
+            regex: (.+)
+            target_label: __metrics_path__
+            replacement: /api/v1/nodes/$1/proxy/metrics/cadvisor
+          - source_labels: [__meta_kubernetes_node_name]
+            target_label: node
+        metric_relabel_configs:
+          - source_labels: [__name__]
+            regex: container_(cpu_usage_seconds_total|memory_working_set_bytes|network_receive_bytes_total|network_transmit_bytes_total|fs_usage_bytes|fs_limit_bytes)|machine_(cpu_cores|memory_bytes)
+            action: keep
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vmagent
+  namespace: ${NAMESPACE}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: vmagent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: vmagent
+        app.kubernetes.io/part-of: k3s-ops
+    spec:
+      serviceAccountName: vmagent
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: vmagent
+          image: ${VMAGENT_IMAGE}
+          imagePullPolicy: IfNotPresent
+          args:
+            - -promscrape.config=/config/scrape.yml
+            - -remoteWrite.url=http://victoria-metrics.${NAMESPACE}.svc:8428/api/v1/write
+            - -remoteWrite.tmpDataPath=/tmp/vmagent-remotewrite-data
+            - -remoteWrite.maxDiskUsagePerURL=512MB
+            - -memory.allowedPercent=50
+            - -httpListenAddr=:8429
+          ports:
+            - name: http
+              containerPort: 8429
+          resources:
+            requests:
+              cpu: 15m
+              memory: 128Mi
+            limits:
+              memory: 256Mi
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            runAsNonRoot: true
+            runAsUser: 65534
+            runAsGroup: 65534
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: config
+              mountPath: /config
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: vmagent-config
+        - name: tmp
+          emptyDir:
+            sizeLimit: 96Mi

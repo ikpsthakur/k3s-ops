@@ -1,0 +1,5 @@
+.env
+.rendered/
+*.local.yaml
+*.secret.yaml
+.DS_Store

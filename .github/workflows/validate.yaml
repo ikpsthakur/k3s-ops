@@ -1,0 +1,23 @@
+name: Validate manifests
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install tools
+        run: sudo apt-get update && sudo apt-get install -y gettext-base
+      - name: Prepare non-secret CI environment
+        run: |
+          cp .env.example .env
+          sed -i "s/SMTP_PASSWORD='replace-me'/SMTP_PASSWORD='ci-placeholder'/" .env
+      - name: Render and validate
+        run: ./scripts/validate.sh

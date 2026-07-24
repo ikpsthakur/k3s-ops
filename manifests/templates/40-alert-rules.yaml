@@ -1,0 +1,115 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vmalert-rules
+  namespace: ${NAMESPACE}
+data:
+  k3s-alerts.yml: |
+    groups:
+      - name: monitoring-health
+        interval: ${SCRAPE_INTERVAL}
+        rules:
+          - alert: MetricsTargetDown
+            expr: up == 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Metrics target {{ $labels.job }} is down"
+              description: "The target has been unreachable for at least five minutes."
+
+      - name: kubernetes-health
+        interval: ${SCRAPE_INTERVAL}
+        rules:
+          - alert: NodeNotReady
+            expr: kube_node_status_condition{condition="Ready",status="true"} == 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "Node {{ $labels.node }} is not ready"
+              description: "The node has remained unready for at least five minutes."
+
+          - alert: DeploymentUnavailable
+            expr: kube_deployment_status_replicas_unavailable > 0
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Deployment {{ $labels.namespace }}/{{ $labels.deployment }} has unavailable replicas"
+              description: "One or more replicas have been unavailable for ten minutes."
+
+          - alert: PodCrashLooping
+            expr: max_over_time(kube_pod_container_status_waiting_reason{reason="CrashLoopBackOff"}[10m]) >= 1
+            for: 10m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} is crash-looping"
+              description: "A container has remained in CrashLoopBackOff."
+
+          - alert: PodFailed
+            expr: kube_pod_status_phase{phase="Failed"} == 1
+            for: 2m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Pod {{ $labels.namespace }}/{{ $labels.pod }} failed"
+              description: "A pod is in the Failed phase."
+
+          - alert: JobFailed
+            expr: kube_job_status_failed > 0
+            for: 5m
+            labels:
+              severity: warning
+            annotations:
+              summary: "Job {{ $labels.namespace }}/{{ $labels.job_name }} failed"
+              description: "A Kubernetes Job reports a failed execution."
+
+          - alert: ContainerRestartingFrequently
+            expr: |
+              increase(
+                kube_pod_container_status_restarts_total{
+                  namespace=~"kube-system|monitoring|longhorn-system"
+                }[15m]
+              ) >= 3
+            labels:
+              severity: critical
+            annotations:
+              summary: "Container repeatedly restarting in {{ $labels.namespace }}"
+              description: >-
+                Container {{ $labels.container }} in pod {{ $labels.namespace }}/{{ $labels.pod }}
+                restarted at least 3 times during the last 15 minutes.
+
+          - alert: ContainerRestarted
+            expr: |
+              increase(kube_pod_container_status_restarts_total[10m]) > 0
+            labels:
+              severity: warning
+            annotations:
+              summary: "Container restarted"
+              description: >-
+                Container {{ $labels.container }} in
+                {{ $labels.namespace }}/{{ $labels.pod }}
+                restarted during the last 10 minutes.
+                
+      - name: storage-health
+        interval: ${SCRAPE_INTERVAL}
+        rules:
+          - alert: PersistentVolumeClaimNearlyFull
+            expr: (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < 0.10 and kubelet_volume_stats_capacity_bytes > 0
+            for: 15m
+            labels:
+              severity: warning
+            annotations:
+              summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 10% free"
+              description: "The persistent volume claim is nearly full."
+
+          - alert: PersistentVolumeClaimCriticallyFull
+            expr: (kubelet_volume_stats_available_bytes / kubelet_volume_stats_capacity_bytes) < 0.05 and kubelet_volume_stats_capacity_bytes > 0
+            for: 5m
+            labels:
+              severity: critical
+            annotations:
+              summary: "PVC {{ $labels.namespace }}/{{ $labels.persistentvolumeclaim }} has less than 5% free"
+              description: "The persistent volume claim is critically full."
